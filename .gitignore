@@ -42,3 +42,5 @@ server/*.sqlite
 server/*.sqlite-wal
 server/*.sqlite-shm
 server/*.sqlite-journal
+
+docker-compose.yml

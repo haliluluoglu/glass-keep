@@ -1156,6 +1156,7 @@ function NoteCard({
   // checklist update callback
   onUpdateChecklistItem,
   currentUser,
+  hideDoneItems = false,
 }) {
 
   const isChecklist = n.type === "checklist";
@@ -1168,12 +1169,13 @@ function NoteCard({
   const total = (n.items || []).length;
   const done = (n.items || []).filter((i) => i.done).length;
   // Sort items with unchecked items first, just like in the modal
-  const sortedItems = (n.items || []).sort((a, b) => {
+  const sortedItems = [...(n.items || [])].sort((a, b) => {
     if (a.done === b.done) return 0; // Same status, maintain order
     return a.done ? 1 : -1; // Unchecked (false) comes before checked (true)
   });
-  const visibleItems = sortedItems.slice(0, 8);
-  const extraCount = total > visibleItems.length ? total - visibleItems.length : 0;
+  const filteredItems = hideDoneItems ? sortedItems.filter((it) => !it.done) : sortedItems;
+  const visibleItems = filteredItems.slice(0, 8);
+  const extraCount = filteredItems.length > visibleItems.length ? filteredItems.length - visibleItems.length : 0;
 
   const imgs = n.images || [];
   const mainImg = imgs[0];
@@ -1302,7 +1304,9 @@ function NoteCard({
           {extraCount > 0 && (
             <div className="text-xs text-gray-600 dark:text-gray-300">+{extraCount} more…</div>
           )}
-          <div className="text-xs text-gray-600 dark:text-gray-300">{done}/{total} completed</div>
+          <div className="text-xs text-gray-600 dark:text-gray-300">
+            {hideDoneItems ? `${done} done hidden` : `${done}/${total} completed`}
+          </div>
         </div>
       )}
 
@@ -2152,6 +2156,7 @@ function NotesUI({
   loadArchivedNotes,
   // checklist update
   onUpdateChecklistItem,
+  hiddenDoneNoteIds,
   // Admin panel
   openAdminPanel,
   // Settings panel
@@ -2802,6 +2807,7 @@ function NotesUI({
                     isOnline={isOnline}
                     onUpdateChecklistItem={onUpdateChecklistItem}
                     currentUser={currentUser}
+                    hideDoneItems={Boolean(hiddenDoneNoteIds[String(n.id)])}
                   />
                 ))}
               </div>
@@ -2845,6 +2851,7 @@ function NotesUI({
                     isOnline={isOnline}
                     onUpdateChecklistItem={onUpdateChecklistItem}
                     currentUser={currentUser}
+                    hideDoneItems={Boolean(hiddenDoneNoteIds[String(n.id)])}
                   />
                 ))}
               </div>
@@ -3117,7 +3124,32 @@ export default function App() {
     setGenericConfirmConfig(config);
     setGenericConfirmOpen(true);
   };
+
+  const getHiddenDoneStorageKey = (userId) => `hidden-done-note-ids:${userId || "guest"}`;
+  const readHiddenDoneNoteIds = (userId) => {
+    try {
+      const key = getHiddenDoneStorageKey(userId);
+      const raw = localStorage.getItem(key);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (e) {
+      return {};
+    }
+  };
+
   const [mItems, setMItems] = useState([]);
+  const [showDoneItems, setShowDoneItems] = useState(true);
+  const [hiddenDoneNoteIds, setHiddenDoneNoteIds] = useState(() => readHiddenDoneNoteIds(currentUser?.id));
+  useEffect(() => {
+    setHiddenDoneNoteIds(readHiddenDoneNoteIds(currentUser?.id));
+  }, [currentUser?.id]);
+  useEffect(() => {
+    try {
+      const key = getHiddenDoneStorageKey(currentUser?.id);
+      localStorage.setItem(key, JSON.stringify(hiddenDoneNoteIds));
+    } catch (e) { }
+  }, [hiddenDoneNoteIds, currentUser?.id]);
   const skipNextItemsAutosave = useRef(false);
   const prevItemsRef = useRef([]);
   const [mInput, setMInput] = useState("");
@@ -4727,8 +4759,11 @@ export default function App() {
 
   const openModal = (id) => {
     const n = notes.find((x) => String(x.id) === String(id)); if (!n) return;
+    const noteId = String(id);
+    const isHidden = Boolean(hiddenDoneNoteIds[noteId]);
     setSidebarOpen(false);
-    setActiveId(String(id));
+    setActiveId(noteId);
+    setShowDoneItems(!isHidden);
     setMType(n.type || "text");
     setMTitle(n.title || "");
     if (n.type === "draw") {
@@ -5880,55 +5915,75 @@ export default function App() {
 
                       {/* Done section */}
                       {mItems.filter(it => it.done).length > 0 && (
-                        <>
-                          <div className="border-t border-[var(--border-light)] pt-4 mt-4">
-                            <h4 className="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-3">Done</h4>
-                            {mItems.filter(it => it.done).map((it) => (
-                              <ChecklistRow
-                                key={it.id}
-                                item={it}
-                                readOnly={!isOnline}
-                                disableToggle={!isOnline}      /* disable toggle when offline */
-                                showRemove={isOnline && true}  /* show delete X only when online */
-                                size="lg"                  /* bigger checkboxes and X in modal */
-                                onToggle={async (checked, e) => {
-                                  e?.stopPropagation(); // Prevent any unwanted event bubbling
-                                  if (!isOnline) return;
-                                  const newItems = mItems.map(p => p.id === it.id ? { ...p, done: checked } : p);
-                                  setMItems(newItems);
-                                  try {
-                                    if (activeId) {
-                                      await api(`/notes/${activeId}`, { method: "PATCH", token, body: { items: newItems, type: "checklist", content: "" } });
-                                      prevItemsRef.current = newItems;
-                                    }
-                                  } catch (e) { }
-                                }}
-                                onChange={async (txt) => {
-                                  if (!isOnline) return;
-                                  const newItems = mItems.map(p => p.id === it.id ? { ...p, text: txt } : p);
-                                  setMItems(newItems);
-                                  try {
-                                    if (activeId) {
-                                      await api(`/notes/${activeId}`, { method: "PATCH", token, body: { items: newItems, type: "checklist", content: "" } });
-                                      prevItemsRef.current = newItems;
-                                    }
-                                  } catch (e) { }
-                                }}
-                                onRemove={async () => {
-                                  if (!isOnline) return;
-                                  const newItems = mItems.filter(p => p.id !== it.id);
-                                  setMItems(newItems);
-                                  try {
-                                    if (activeId) {
-                                      await api(`/notes/${activeId}`, { method: "PATCH", token, body: { items: newItems, type: "checklist", content: "" } });
-                                      prevItemsRef.current = newItems;
-                                    }
-                                  } catch (e) { }
-                                }}
-                              />
-                            ))}
-                          </div>
-                        </>
+                        <div className="border-t border-[var(--border-light)] pt-4 mt-4">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const nextShowDoneItems = !showDoneItems;
+                              setShowDoneItems(nextShowDoneItems);
+                              if (activeId) {
+                                setHiddenDoneNoteIds((prev) => {
+                                  const next = { ...prev };
+                                  const key = String(activeId);
+                                  if (nextShowDoneItems) {
+                                    delete next[key];
+                                  } else {
+                                    next[key] = true;
+                                  }
+                                  return next;
+                                });
+                              }
+                            }}
+                            className="mb-3 text-sm font-semibold text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100">
+                            Done {showDoneItems ? "▾" : "▸"}
+                          </button>
+
+                          {showDoneItems && mItems.filter(it => it.done).map((it) => (
+                            <ChecklistRow
+                              key={it.id}
+                              item={it}
+                              readOnly={!isOnline}
+                              disableToggle={!isOnline}      /* disable toggle when offline */
+                              showRemove={isOnline && true}  /* show delete X only when online */
+                              size="lg"                  /* bigger checkboxes and X in modal */
+                              onToggle={async (checked, e) => {
+                                e?.stopPropagation(); // Prevent any unwanted event bubbling
+                                if (!isOnline) return;
+                                const newItems = mItems.map(p => p.id === it.id ? { ...p, done: checked } : p);
+                                setMItems(newItems);
+                                try {
+                                  if (activeId) {
+                                    await api(`/notes/${activeId}`, { method: "PATCH", token, body: { items: newItems, type: "checklist", content: "" } });
+                                    prevItemsRef.current = newItems;
+                                  }
+                                } catch (e) { }
+                              }}
+                              onChange={async (txt) => {
+                                if (!isOnline) return;
+                                const newItems = mItems.map(p => p.id === it.id ? { ...p, text: txt } : p);
+                                setMItems(newItems);
+                                try {
+                                  if (activeId) {
+                                    await api(`/notes/${activeId}`, { method: "PATCH", token, body: { items: newItems, type: "checklist", content: "" } });
+                                    prevItemsRef.current = newItems;
+                                  }
+                                } catch (e) { }
+                              }}
+                              onRemove={async () => {
+                                if (!isOnline) return;
+                                const newItems = mItems.filter(p => p.id !== it.id);
+                                setMItems(newItems);
+                                try {
+                                  if (activeId) {
+                                    await api(`/notes/${activeId}`, { method: "PATCH", token, body: { items: newItems, type: "checklist", content: "" } });
+                                    prevItemsRef.current = newItems;
+                                  }
+                                } catch (e) { }
+                              }}
+                            />
+                          ))}
+                        </div>
                       )}
                     </div>
                   ) : <p className="text-sm text-gray-500">No items yet.</p>}
@@ -6612,6 +6667,7 @@ export default function App() {
         loadArchivedNotes={loadArchivedNotes}
         // checklist update
         onUpdateChecklistItem={onUpdateChecklistItem}
+        hiddenDoneNoteIds={hiddenDoneNoteIds}
         // Admin panel
         openAdminPanel={openAdminPanel}
         // Settings panel

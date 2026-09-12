@@ -2141,6 +2141,7 @@ function NotesUI({
   onToggleSelect,
   onSelectAllPinned,
   onSelectAllOthers,
+  onSelectAll,
   onBulkDelete,
   onBulkPin,
   onBulkArchive,
@@ -2172,6 +2173,9 @@ function NotesUI({
       activeTagFilter === 'ARCHIVED' ? "Archived Notes" :
         activeTagFilter;
 
+  const visibleIds = [(pinned || []), (others || [])].flat().map((n) => String(n.id));
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => (selectedIds || []).includes(id));
+
   // Close header menu when scrolling
   React.useEffect(() => {
     if (!headerMenuOpen) return;
@@ -2198,6 +2202,9 @@ function NotesUI({
           <div className="flex items-center gap-2 flex-wrap">
             <button className="px-3 py-1.5 rounded-lg border border-[var(--border-light)] hover:bg-black/5 dark:hover:bg-white/10 text-sm" onClick={onBulkDownloadZip}>
               Download (.zip)
+            </button>
+            <button className="px-3 py-1.5 rounded-lg border border-[var(--border-light)] hover:bg-black/5 dark:hover:bg-white/10 text-sm" onClick={onSelectAll}>
+              {allVisibleSelected ? 'Unselect all' : 'Select all'}
             </button>
             <button className="px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 text-sm" onClick={onBulkDelete}>
               Delete
@@ -3249,6 +3256,17 @@ export default function App() {
   const onSelectAllOthers = () => {
     const ids = notes.filter((n) => !n.pinned).map((n) => String(n.id));
     setSelectedIds((prev) => Array.from(new Set([...prev, ...ids])));
+  };
+  const onSelectAll = () => {
+    const ids = (filtered || []).map((n) => String(n.id));
+    if (!ids.length) return;
+    const idsSet = new Set(ids);
+    const allSelected = ids.every((id) => selectedIds.includes(id));
+    if (allSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !idsSet.has(id)));
+    } else {
+      setSelectedIds(ids);
+    }
   };
 
   // -------- View mode: Grid vs List --------
@@ -6652,6 +6670,7 @@ export default function App() {
         onToggleSelect={onToggleSelect}
         onSelectAllPinned={onSelectAllPinned}
         onSelectAllOthers={onSelectAllOthers}
+        onSelectAll={onSelectAll}
         onBulkDelete={onBulkDelete}
         onBulkPin={onBulkPin}
         onBulkArchive={onBulkArchive}

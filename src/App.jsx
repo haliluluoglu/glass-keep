@@ -1643,7 +1643,7 @@ function TagSidebar({ open, onClose, tagsWithCounts, activeTag, onSelect, dark, 
 }
 
 /** ---------- Settings Panel ---------- */
-function SettingsPanel({ open, onClose, dark, onExportAll, onImportAll, onImportGKeep, onImportMd, onDownloadSecretKey, alwaysShowSidebarOnWide, setAlwaysShowSidebarOnWide, localAiEnabled, setLocalAiEnabled, showGenericConfirm, showToast }) {
+function SettingsPanel({ open, onClose, dark, onExportAll, onImportAll, onImportGKeep, onImportMd, onDownloadSecretKey, alwaysShowSidebarOnWide, setAlwaysShowSidebarOnWide, scrollToEnd, setScrollToEnd, localAiEnabled, setLocalAiEnabled, showGenericConfirm, showToast }) {
   // Prevent body scroll when settings panel is open
   React.useEffect(() => {
     if (open) {
@@ -1787,6 +1787,28 @@ function SettingsPanel({ open, onClose, dark, onExportAll, onImportAll, onImport
                 >
                   <span
                     className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${alwaysShowSidebarOnWide ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                  />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-medium">Scroll to the end</div>
+                  <div className="text-sm text-gray-500">Open notes at the bottom instead of the top</div>
+                </div>
+                <button
+                  role="switch"
+                  aria-checked={!!scrollToEnd}
+                  aria-label="Scroll to the end"
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${scrollToEnd
+                    ? 'bg-indigo-600'
+                    : 'bg-gray-300 dark:bg-gray-600'
+                    }`}
+                  onClick={() => setScrollToEnd(!scrollToEnd)}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${scrollToEnd ? 'translate-x-6' : 'translate-x-1'
                       }`}
                   />
                 </button>
@@ -3068,6 +3090,10 @@ export default function App() {
     try { return parseInt(localStorage.getItem("sidebarWidth")) || 288; } catch (e) { return 288; }
   });
 
+  const [scrollToEnd, setScrollToEnd] = useState(() => {
+    try { return localStorage.getItem("scrollToEnd") === "true"; } catch (e) { return false; }
+  });
+
   // Local AI
   const [localAiEnabled, setLocalAiEnabled] = useState(() => {
     try {
@@ -3298,6 +3324,10 @@ export default function App() {
   }, [sidebarWidth]);
 
   useEffect(() => {
+    try { localStorage.setItem("scrollToEnd", String(scrollToEnd)); } catch (e) { }
+  }, [scrollToEnd]);
+
+  useEffect(() => {
     try { localStorage.setItem("localAiEnabled", String(localAiEnabled)); } catch (e) { }
     if (!localAiEnabled) setAiResponse(null);
   }, [localAiEnabled]);
@@ -3469,6 +3499,7 @@ export default function App() {
   // NEW: modal scroll container ref + state to place Edited at bottom when not scrollable
   const modalScrollRef = useRef(null);
   const [modalScrollable, setModalScrollable] = useState(false);
+  const pendingScrollToEndRef = useRef(false);
 
   // SSE connection status
   const [sseConnected, setSseConnected] = useState(false);
@@ -4150,6 +4181,38 @@ export default function App() {
       ro?.disconnect();
     };
   }, [open, mBody, mTitle, mItems.length, mImages.length, viewMode, mType]);
+
+  useEffect(() => {
+    if (!open) {
+      pendingScrollToEndRef.current = false;
+      return;
+    }
+    if (!scrollToEnd || !pendingScrollToEndRef.current) return;
+
+    let cancelled = false;
+    const toEnd = () => {
+      const el = modalScrollRef.current;
+      if (!el || cancelled) return;
+      el.scrollTop = el.scrollHeight;
+    };
+
+    toEnd();
+    const raf = requestAnimationFrame(toEnd);
+    const t1 = setTimeout(toEnd, 50);
+    const t2 = setTimeout(toEnd, 200);
+    const t3 = setTimeout(() => {
+      toEnd();
+      pendingScrollToEndRef.current = false;
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [open, activeId, scrollToEnd, viewMode, mType, mBody, mImages.length, mItems.length]);
 
   /** -------- Auth actions -------- */
   const signOut = () => {
@@ -4833,6 +4896,7 @@ export default function App() {
 
     setViewMode(true);
     setModalMenuOpen(false);
+    pendingScrollToEndRef.current = true;
     setOpen(true);
   };
 
@@ -5075,8 +5139,8 @@ export default function App() {
     setShowModalFmt(false);
   };
 
-  const saveModal = async () => {
-    if (activeId == null) return;
+  const persistCurrentModalNote = async ({ closeAfter = false } = {}) => {
+    if (activeId == null) return false;
     const base = {
       id: activeId,
       title: mTitle.trim(),
@@ -5111,13 +5175,20 @@ export default function App() {
         lastEditedAt: nowIso
       } : n)
       ));
-      closeModal();
+      if (closeAfter) closeModal();
+      return true;
     } catch (e) {
       alert(e.message || "Failed to save note");
+      return false;
     } finally {
       setSavingModal(false);
     }
   };
+
+  const saveModal = async () => {
+    await persistCurrentModalNote({ closeAfter: true });
+  };
+
   const deleteModal = async () => {
     if (activeId == null) return;
     try {
@@ -5322,6 +5393,8 @@ export default function App() {
   const filteredEmptyWithSearch = filtered.length === 0 && notes.length > 0 && !!(search || (tagFilter && tagFilter !== 'ARCHIVED'));
   const allEmpty = notes.length === 0;
   const SCROLL_EDGE_PX = 8;
+  const modalContentRef = useRef(null);
+  const stickToEndRef = useRef(false);
   const [modalScrollJump, setModalScrollJump] = useState({ available: false, direction: "bottom" });
 
   const updateModalScrollJump = useCallback(() => {
@@ -5376,6 +5449,46 @@ export default function App() {
       window.removeEventListener("resize", updateModalScrollJump);
     };
   }, [open, activeId, mBody, mType, viewMode, updateModalScrollJump]);
+
+  useEffect(() => {
+    if (!open) {
+      pendingScrollToEndRef.current = false;
+      stickToEndRef.current = false;
+      return;
+    }
+    if (!scrollToEnd || !pendingScrollToEndRef.current) return;
+
+    const el = modalScrollRef.current;
+    const content = modalContentRef.current;
+    if (!el || !content) return;
+
+    const toEnd = () => {
+      el.scrollTop = el.scrollHeight;
+    };
+
+    stickToEndRef.current = true;
+    toEnd();
+
+    const ro = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(() => {
+        if (stickToEndRef.current) toEnd();
+      })
+      : null;
+    ro?.observe(content);
+
+    const onScroll = () => {
+      const atBottom =
+        el.scrollTop + el.clientHeight >= el.scrollHeight - SCROLL_EDGE_PX;
+      stickToEndRef.current = atBottom;
+      if (!atBottom) pendingScrollToEndRef.current = false;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+
+    return () => {
+      ro?.disconnect();
+      el.removeEventListener("scroll", onScroll);
+    };
+  }, [open, activeId, scrollToEnd]);
 
   /** -------- Modal link handler: open links in new tab (no auto-enter edit) -------- */
   const onModalBodyClick = (e) => {
@@ -5742,7 +5855,7 @@ export default function App() {
             </div>
 
             {/* Content area */}
-            <div className={mType === "draw" ? "p-2 pb-6" : "p-6 pb-12"} onClick={onModalBodyClick}>
+            <div ref={modalContentRef} className={mType === "draw" ? "p-2 pb-6" : "p-6 pb-12"} onClick={onModalBodyClick}>
               {/* Images */}
               {mImages.length > 0 && (
                 <div className="mb-5 flex gap-3 overflow-x-auto">
@@ -6635,6 +6748,8 @@ export default function App() {
         onDownloadSecretKey={downloadSecretKey}
         alwaysShowSidebarOnWide={alwaysShowSidebarOnWide}
         setAlwaysShowSidebarOnWide={setAlwaysShowSidebarOnWide}
+        scrollToEnd={scrollToEnd}
+        setScrollToEnd={setScrollToEnd}
         localAiEnabled={localAiEnabled}
         setLocalAiEnabled={setLocalAiEnabled}
         showGenericConfirm={showGenericConfirm}

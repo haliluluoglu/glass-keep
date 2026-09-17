@@ -250,6 +250,16 @@ const ArrowRight = () => (
     <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
   </svg>
 );
+const ArrowUp = () => (
+  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5m-7 7l7-7 7 7" />
+  </svg>
+);
+const ArrowDown = () => (
+  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14m7-7l-7 7-7-7" />
+  </svg>
+);
 const Kebab = () => (
   <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
     <circle cx="12" cy="5" r="1.5" />
@@ -5311,6 +5321,61 @@ export default function App() {
   const others = filtered.filter((n) => !n.pinned);
   const filteredEmptyWithSearch = filtered.length === 0 && notes.length > 0 && !!(search || (tagFilter && tagFilter !== 'ARCHIVED'));
   const allEmpty = notes.length === 0;
+  const SCROLL_EDGE_PX = 8;
+  const [modalScrollJump, setModalScrollJump] = useState({ available: false, direction: "bottom" });
+
+  const updateModalScrollJump = useCallback(() => {
+    const el = modalScrollRef.current;
+    if (!el) {
+      setModalScrollJump({ available: false, direction: "bottom" });
+      return;
+    }
+
+    const available = el.scrollHeight - el.clientHeight > SCROLL_EDGE_PX;
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - SCROLL_EDGE_PX;
+
+    setModalScrollJump({
+      available,
+      direction: atBottom ? "top" : "bottom",
+    });
+  }, []);
+
+  const jumpModalScroll = useCallback((direction) => {
+    const el = modalScrollRef.current;
+    if (!el) return;
+    if (!el) return;
+
+    el.scrollTo({
+      top: direction === "top" ? 0 : el.scrollHeight,
+      behavior: "smooth",
+    });
+  }, []);
+
+  useEffect(() => {
+    const el = modalScrollRef.current;
+    if (!el) return;
+
+    updateModalScrollJump();
+
+    const raf1 = requestAnimationFrame(() => {
+      requestAnimationFrame(updateModalScrollJump);
+    });
+
+    const resizeObserver = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(updateModalScrollJump)
+      : null;
+    resizeObserver?.observe(el);
+
+    el.addEventListener("scroll", updateModalScrollJump, { passive: true });
+    window.addEventListener("resize", updateModalScrollJump);
+
+    return () => {
+      cancelAnimationFrame(raf1);
+      resizeObserver?.disconnect();
+      el.removeEventListener("scroll", updateModalScrollJump);
+      window.removeEventListener("resize", updateModalScrollJump);
+    };
+  }, [open, activeId, mBody, mType, viewMode, updateModalScrollJump]);
 
   /** -------- Modal link handler: open links in new tab (no auto-enter edit) -------- */
   const onModalBodyClick = (e) => {
@@ -5563,6 +5628,18 @@ export default function App() {
                       title={viewMode ? "Switch to Edit mode" : "Switch to View mode"}
                     >
                       {viewMode ? "Edit mode" : "View mode"}
+                    </button>
+                  )}
+
+                  {isOnline && modalScrollJump.available && (
+                    <button
+                      type="button"
+                      className="p-2 rounded-lg border border-[var(--border-light)] bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10"
+                      onClick={() => jumpModalScroll(modalScrollJump.direction)}
+                      title={modalScrollJump.direction === "top" ? "Scroll to top" : "Scroll to bottom"}
+                      aria-label={modalScrollJump.direction === "top" ? "Scroll to top" : "Scroll to bottom"}
+                    >
+                      {modalScrollJump.direction === "top" ? <ArrowUp /> : <ArrowDown />}
                     </button>
                   )}
 

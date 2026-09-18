@@ -4182,38 +4182,6 @@ export default function App() {
     };
   }, [open, mBody, mTitle, mItems.length, mImages.length, viewMode, mType]);
 
-  useEffect(() => {
-    if (!open) {
-      pendingScrollToEndRef.current = false;
-      return;
-    }
-    if (!scrollToEnd || !pendingScrollToEndRef.current) return;
-
-    let cancelled = false;
-    const toEnd = () => {
-      const el = modalScrollRef.current;
-      if (!el || cancelled) return;
-      el.scrollTop = el.scrollHeight;
-    };
-
-    toEnd();
-    const raf = requestAnimationFrame(toEnd);
-    const t1 = setTimeout(toEnd, 50);
-    const t2 = setTimeout(toEnd, 200);
-    const t3 = setTimeout(() => {
-      toEnd();
-      pendingScrollToEndRef.current = false;
-    }, 400);
-
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(raf);
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-    };
-  }, [open, activeId, scrollToEnd, viewMode, mType, mBody, mImages.length, mItems.length]);
-
   /** -------- Auth actions -------- */
   const signOut = () => {
     setAuth(null);
@@ -5394,7 +5362,6 @@ export default function App() {
   const allEmpty = notes.length === 0;
   const SCROLL_EDGE_PX = 8;
   const modalContentRef = useRef(null);
-  const stickToEndRef = useRef(false);
   const [modalScrollJump, setModalScrollJump] = useState({ available: false, direction: "bottom" });
 
   const updateModalScrollJump = useCallback(() => {
@@ -5415,7 +5382,6 @@ export default function App() {
 
   const jumpModalScroll = useCallback((direction) => {
     const el = modalScrollRef.current;
-    if (!el) return;
     if (!el) return;
 
     el.scrollTo({
@@ -5438,6 +5404,7 @@ export default function App() {
       ? new ResizeObserver(updateModalScrollJump)
       : null;
     resizeObserver?.observe(el);
+    if (modalContentRef.current) resizeObserver?.observe(modalContentRef.current);
 
     el.addEventListener("scroll", updateModalScrollJump, { passive: true });
     window.addEventListener("resize", updateModalScrollJump);
@@ -5453,41 +5420,52 @@ export default function App() {
   useEffect(() => {
     if (!open) {
       pendingScrollToEndRef.current = false;
-      stickToEndRef.current = false;
       return;
     }
     if (!scrollToEnd || !pendingScrollToEndRef.current) return;
 
     const el = modalScrollRef.current;
     const content = modalContentRef.current;
-    if (!el || !content) return;
+    if (!el) return;
+
+    let stopped = false;
+    let ro = null;
+    let settleTimer = null;
 
     const toEnd = () => {
+      if (stopped) return;
       el.scrollTop = el.scrollHeight;
     };
 
-    stickToEndRef.current = true;
+    const takeoverTargets = [
+      [el, "wheel"],
+      [el, "pointerdown"],
+      [el, "touchstart"],
+      [window, "keydown"],
+    ];
+
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      pendingScrollToEndRef.current = false;
+      ro?.disconnect();
+      if (settleTimer) clearTimeout(settleTimer);
+      takeoverTargets.forEach(([target, evt]) => target.removeEventListener(evt, stop));
+    };
+
     toEnd();
 
-    const ro = typeof ResizeObserver !== "undefined"
-      ? new ResizeObserver(() => {
-        if (stickToEndRef.current) toEnd();
-      })
-      : null;
-    ro?.observe(content);
+    if (content && typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(toEnd);
+      ro.observe(content);
+    }
 
-    const onScroll = () => {
-      const atBottom =
-        el.scrollTop + el.clientHeight >= el.scrollHeight - SCROLL_EDGE_PX;
-      stickToEndRef.current = atBottom;
-      if (!atBottom) pendingScrollToEndRef.current = false;
-    };
-    el.addEventListener("scroll", onScroll, { passive: true });
+    takeoverTargets.forEach(([target, evt]) =>
+      target.addEventListener(evt, stop, { passive: true })
+    );
+    settleTimer = setTimeout(stop, 600);
 
-    return () => {
-      ro?.disconnect();
-      el.removeEventListener("scroll", onScroll);
-    };
+    return stop;
   }, [open, activeId, scrollToEnd]);
 
   /** -------- Modal link handler: open links in new tab (no auto-enter edit) -------- */
@@ -5744,7 +5722,7 @@ export default function App() {
                     </button>
                   )}
 
-                  {isOnline && modalScrollJump.available && (
+                  {modalScrollJump.available && (
                     <button
                       type="button"
                       className="p-2 rounded-lg border border-[var(--border-light)] bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10"
